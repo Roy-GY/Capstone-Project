@@ -10,6 +10,25 @@
 
 ## 安装
 
+本目录也提供 uv 项目配置。使用 Python 3.12 创建独立环境并安装锁定依赖：
+
+```powershell
+uv sync --locked
+```
+
+本次实测使用 PyTorch 2.4.0+cu121（与课程示例推荐的 2.7.1+cu126 不同，原因是本机可用的 CUDA wheel 版本）；依赖版本以 `pyproject.toml` 和 `uv.lock` 为准。需要下载模型时安装可选依赖：
+
+```powershell
+uv sync --locked --extra download
+uv run --locked --extra download python -c "from modelscope import snapshot_download; snapshot_download('Qwen/Qwen2.5-1.5B-Instruct', local_dir='models/Qwen2.5-1.5B-Instruct')"
+```
+
+使用 uv 环境运行脚本：
+
+```powershell
+uv run --locked python qwen_inference.py --model ./models/Qwen2.5-1.5B-Instruct --device cuda --debug --output results/gpu.json
+```
+
 推荐 Python 3.10–3.12，在本目录创建独立环境：
 
 ```bash
