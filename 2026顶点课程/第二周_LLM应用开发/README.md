@@ -35,6 +35,8 @@ python llm_app.py --model ./models/Qwen2.5-1.5B-Instruct --device cpu --stream -
 
 示例要求生成 `count_positive(nums)`，返回列表中严格大于 0 的元素个数，并输出包含 `function_name`、`code` 两个字符串字段的 JSON。
 
+本次作业拓展增加了可选的 AST 函数契约检查，在上述示例命令中添加 `--check-code` 即可启用，并使用不同的输出文件名保存结果。`--example` 本身只启用基础结构化校验。自定义任务使用 `--structured --check-code --expected-function 函数名`，可另加 `--expected-parameter 首个位置参数名`；期望参数必须配合 `--check-code` 使用。完整实验命令与结果见 [提交说明](提交说明.md)。
+
 修改脚本中的 Prompt 和 `CodeResult` 后，用下面的命令测试自己的版本，并继续多轮修改：
 
 ```bash

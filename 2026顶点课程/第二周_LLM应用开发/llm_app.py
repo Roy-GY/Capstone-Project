@@ -73,10 +73,54 @@ class CodeResult(BaseModel):
     code: str
 
 
-def validate_text(text):
+def check_function_contract(code, expected_function_name, expected_parameter_name=None,
+                            declared_function_name=None):
+    """只用 AST 检查函数契约，不执行模型生成的代码。"""
+    try:
+        tree = ast.parse(code)
+    except (SyntaxError, ValueError, UnicodeError) as exc:
+        return {"status": "not_run", "reason": "python_syntax_error",
+                "error": str(exc)}
+
+    functions = [node for node in tree.body
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    all_functions = [node for node in ast.walk(tree)
+                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    imports = [node for node in ast.walk(tree)
+               if isinstance(node, (ast.Import, ast.ImportFrom))]
+    names = [node.name for node in functions]
+    first_parameter = None
+    if functions:
+        args = functions[0].args
+        positional = [*args.posonlyargs, *args.args]
+        first_parameter = positional[0].arg if positional else None
+
+    checks = {
+        "single_function": {"ok": len(all_functions) == 1, "actual": len(all_functions)},
+        "function_name": {"ok": names == [expected_function_name], "actual": names,
+                           "expected": expected_function_name},
+        "no_imports": {"ok": not imports, "actual": len(imports)},
+    }
+    if declared_function_name is not None:
+        checks["declared_function_name"] = {
+            "ok": names == [declared_function_name],
+            "actual": declared_function_name,
+            "expected": expected_function_name,
+        }
+    if expected_parameter_name is not None:
+        checks["first_parameter"] = {
+            "ok": first_parameter == expected_parameter_name,
+            "actual": first_parameter,
+            "expected": expected_parameter_name,
+        }
+    status = "contract_valid" if all(item["ok"] for item in checks.values()) else "contract_error"
+    return {"status": status, "checks": checks}
+
+
+def validate_text(text, expected_function_name=None, expected_parameter_name=None):
     # 输入是模型返回的完整正文字符串；输出字典记录校验状态、错误或解析结果。
-    # 三层检查各有含义：JSON 能否解析 → 字段是否合规 → code 是否符合 Python 语法。
-    # 即使全部通过，也不等于算法正确；功能正确性仍需另外检查。
+    # 基础检查各有含义：JSON 能否解析 → 字段是否合规 → code 是否符合 Python 语法。
+    # 启用契约检查时再验证函数结构；即使全部通过，也不等于算法正确。
     try:
         data = json.loads(text)  # 保留原文，不删围栏、不补齐 JSON。
     except json.JSONDecodeError as exc:
@@ -86,16 +130,24 @@ def validate_text(text):
     except ValidationError as exc:
         return {"status": "schema_error", "error": str(exc)}
     # 只有字段约定通过后才能读取 result.code。ast.parse 构建语法树，可以发现
-    # 缩进和括号等问题，但不会检查返回值是否符合题意，也不保证存在指定函数。
+    # 缩进和括号等问题；契约检查再验证指定函数是否存在，但不会检查返回值题意。
     try:
         ast.parse(result.code)  # 只解析语法，不执行模型生成的代码。
         syntax = {"status": "syntax_valid"}
     except (SyntaxError, ValueError, UnicodeError) as exc:
         syntax = {"status": "syntax_error", "error": str(exc), "line": getattr(exc, "lineno", None)}
     # Schema 与 Python 语法分开记录：schema_valid 可以同时伴随 syntax_error。
+    contract = {"status": "not_requested"}
+    if expected_function_name is not None:
+        contract = (check_function_contract(result.code, expected_function_name,
+                                            expected_parameter_name, result.function_name)
+                    if syntax["status"] == "syntax_valid" else
+                    {"status": "not_run", "reason": "python_syntax_error"})
+    status = "contract_error" if contract["status"] == "contract_error" else "schema_valid"
     # model_dump 得到普通字典；与导出规则的 model_json_schema() 用途不同。
-    return {"status": "schema_valid", "parsed": result.model_dump(),
-            "python_syntax": syntax, "functional_correctness": "not_tested"}
+    return {"status": status, "parsed": result.model_dump(),
+            "python_syntax": syntax, "function_contract": contract,
+            "functional_correctness": "not_tested"}
 
 
 def save_json(path, data):
@@ -116,6 +168,10 @@ def conversation(args, base_url, environment):
     system = {"role": "system", "content": SYSTEM_PROMPT + (FORMAT_PROMPT if args.structured else "")}
     messages, turn = [system], 0
     prompt = EXAMPLE_PROMPT if args.example else args.prompt
+    expected_function_name = expected_parameter_name = None
+    if args.check_code:
+        expected_function_name = args.expected_function or ("count_positive" if args.example else None)
+        expected_parameter_name = args.expected_parameter or ("nums" if args.example else None)
     # base_url 指向本脚本的本地服务，不会调用云端 OpenAI；api_key 仅为 SDK 占位值。
     # 关闭自动重试，使一次实验的失败和耗时可以直接观察。
     with OpenAI(base_url=base_url, api_key="local-demo", timeout=180, max_retries=0) as client:
@@ -175,16 +231,24 @@ def conversation(args, base_url, environment):
                 result = {"status": "not_complete", "detail": detail}
             else:
                 # --structured 开启时才解析模型正文；普通文本回答不要求 JSON。
-                result = validate_text(text) if args.structured else {"status": "text_received"}
+                result = (validate_text(text, expected_function_name, expected_parameter_name)
+                          if args.structured else {"status": "text_received"})
             output = (args.output.with_name(f"{args.output.stem}.turn{turn:02d}.json")
                       if args.chat else args.output)
             # model_json_schema() 导出字段约定，不是模型回答；parsed 则是校验后的数据。
             # 每轮独立保存，raw_text 始终保留原样，便于复核失败原因。
             save_json(output, {
-                "record_origin": "live_model_call", "constraint_mode": "prompt_only",
+                "record_origin": "live_model_call",
+                "constraint_mode": ("prompt_plus_client_ast_validation"
+                                    if args.check_code else "prompt_only"),
                 "environment": environment, "base_url": base_url, "request": request,
                 "raw_text": text, "finish_reason": reason, "usage": usage, "result": result,
                 "total_seconds": elapsed, "first_text_seconds": first_text,
+                "validation_options": {
+                    "code_contract_check": args.check_code,
+                    "expected_function_name": expected_function_name,
+                    "expected_parameter_name": expected_parameter_name,
+                },
                 "json_schema": CodeResult.model_json_schema() if args.structured else None,
             })
             print(f"\n状态：{result['status']}；耗时：{elapsed:.3f}s；记录：{output}")
@@ -192,7 +256,7 @@ def conversation(args, base_url, environment):
                 print(result["error"])
             if "detail" in result:
                 print(result["detail"])
-            if result["status"] == "schema_valid":
+            if result["status"] in ("schema_valid", "contract_error"):
                 syntax = result["python_syntax"]
                 print("JSON/Schema：通过；Python 语法：", syntax["status"])
                 if syntax["status"] == "syntax_error":
@@ -200,6 +264,8 @@ def conversation(args, base_url, environment):
                 else:
                     print("语法通过；代码未执行，功能正确性尚未验证。")
                 print("校验后读取的函数名：", result["parsed"]["function_name"])
+                if result.get("function_contract", {}).get("status") != "not_requested":
+                    print("函数契约：", result["function_contract"]["status"])
                 print("代码预览（只展示，不执行）：")
                 print(result["parsed"]["code"])  # JSON 解析已将转义的换行还原为真实换行。
             if not args.chat:
@@ -409,12 +475,24 @@ def main():
     parser.add_argument("--max-new-tokens", type=int, default=256)
     parser.add_argument("--stream", action="store_true")
     parser.add_argument("--structured", action="store_true")
+    parser.add_argument("--check-code", action="store_true",
+                        help="对结构化结果做 AST 函数契约检查，不执行生成代码")
+    parser.add_argument("--expected-function", default=None,
+                        help="函数契约检查期望的函数名")
+    parser.add_argument("--expected-parameter", default=None,
+                        help="函数契约检查期望的首个参数名")
     parser.add_argument("--chat", action="store_true")
     parser.add_argument("--output", type=Path, default=Path("results/run.json"))
     args = parser.parse_args()
     if not 1 <= args.max_new_tokens <= 512 or not args.prompt.strip():
         parser.error("输出长度须在 1–512 之间，Prompt 不能为空")
     args.structured = args.structured or args.example
+    if not args.check_code and (args.expected_function is not None or args.expected_parameter is not None):
+        parser.error("--expected-function 和 --expected-parameter 需要同时使用 --check-code")
+    if args.check_code and not args.structured:
+        parser.error("--check-code 需要同时使用 --structured 或 --example")
+    if args.check_code and not args.example and not args.expected_function:
+        parser.error("自定义 --check-code 时必须提供 --expected-function")
     try:
         args.prompt.encode("utf-8")
     except UnicodeError:
