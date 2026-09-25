@@ -1,5 +1,22 @@
 # 第三周：Agent 与 Tool Calling
 
+## 本次作业提交
+
+- [提交说明](提交说明.md)：环境与显存评估、五组参数对照、调用链分析及 JSON 停止条件拓展。
+- [实验结果](results/)：五份基础实验与四份拓展对照，保留完整模型原文和调用链。
+- [验证日志](logs/)：自测、单元测试、运行命令与结果完整性核验。
+- `run_experiments.py` 用于顺序复现实验，已有结果时拒绝覆盖；`verify_results.py` 用于核验结果。
+
+在本目录复用第一周环境进行检查：
+
+```powershell
+& '../第一周_LLM推理/.venv/Scripts/python.exe' -X utf8 agent_v0.py --selftest
+& '../第一周_LLM推理/.venv/Scripts/python.exe' -X utf8 -m unittest test_json_stop -v
+& '../第一周_LLM推理/.venv/Scripts/python.exe' -X utf8 verify_results.py
+```
+
+以下保留课程原始使用说明。
+
 - [Minimal Agent 与 Tool Calling 课件](Minimal%20Agent与Tool%20Calling.pptx)
 - [完整实现](agent_v0.py)
 - [课后作业](作业.md)

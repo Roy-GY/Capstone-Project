@@ -1,0 +1,4 @@
+# Preserve experiment JSON bytes across Windows checkouts for SHA-256 validation.
+results/*.json -text whitespace=cr-at-eol
+# Keep captured console output unchanged, including trailing spaces.
+logs/*.txt whitespace=-blank-at-eol

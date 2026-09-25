@@ -1,0 +1,86 @@
+{
+  "verification": "PASS",
+  "checks": [
+    {
+      "file": "results\\01_greedy_legacy.json",
+      "sha256": "2a9d60e5a8c90e7172ec2107a142c71ab6a97d079409d50766997754c748321b",
+      "status": "ok",
+      "answer": "请提供正确的文件路径以便进行后续操作。",
+      "successful_tools": [],
+      "answer_contains_94_percent": false,
+      "edge_exact_match": null
+    },
+    {
+      "file": "results\\02_sample_t0.7_p0.8_k20.json",
+      "sha256": "8be5376800dd4d90115fb37d65a54a3d2c17ed71457da36e06765bb07fa1f43a",
+      "status": "too_many_failures",
+      "answer": null,
+      "successful_tools": [],
+      "answer_contains_94_percent": false,
+      "edge_exact_match": null
+    },
+    {
+      "file": "results\\03_sample_t0.3_p0.8_k20.json",
+      "sha256": "56ed5ab54018ff190c7846ddcc0a13d7f0cdfc055cc9cdc0336a562c53a43f07",
+      "status": "ok",
+      "answer": "无法完成任务的原因在于无法读取指定的文件。请确认文件是否存在并且具有可读权限。",
+      "successful_tools": [],
+      "answer_contains_94_percent": false,
+      "edge_exact_match": null
+    },
+    {
+      "file": "results\\04_sample_t0.3_p0.95_k20.json",
+      "sha256": "18011708124dc72761e88f2e6707002ee8271b4e94b925fffd032d622431c99e",
+      "status": "ok",
+      "answer": "当前环境不支持执行计算测试通过率的功能。建议检查您的代码或环境配置是否正确，并确认是否有足够的权限来读取文件。",
+      "successful_tools": [],
+      "answer_contains_94_percent": false,
+      "edge_exact_match": null
+    },
+    {
+      "file": "results\\05_sample_t0.3_p0.95_k50.json",
+      "sha256": "5d377c65857029a2392049188bae4eb2baab053323a01191bfdca1be718a4d8f",
+      "status": "ok",
+      "answer": "当前环境不支持执行计算测试通过率的功能。建议检查您的代码或环境配置是否正确，并确认是否有足够的权限来读取文件。",
+      "successful_tools": [],
+      "answer_contains_94_percent": false,
+      "edge_exact_match": null
+    },
+    {
+      "file": "results\\ext_report_legacy.json",
+      "sha256": "690b03c04c027d3428d721152949aad68784aa5b8c4d6d20e38477a03a3a455a",
+      "status": "ok",
+      "answer": "请提供正确的文件路径以便进行后续操作。",
+      "successful_tools": [],
+      "answer_contains_94_percent": false,
+      "edge_exact_match": null
+    },
+    {
+      "file": "results\\ext_report_string-aware.json",
+      "sha256": "3c4d3259b1970e3b763ef281afe98d5a363d7f34fa89bac38d3f6d4954e26a24",
+      "status": "ok",
+      "answer": "请提供正确的文件路径以便进行后续操作。",
+      "successful_tools": [],
+      "answer_contains_94_percent": false,
+      "edge_exact_match": null
+    },
+    {
+      "file": "results\\ext_brace_legacy.json",
+      "sha256": "1269a6f55e3df48126727d2c6df2df130b24742a9bb158fbe863ed6a25533061",
+      "status": "too_many_failures",
+      "answer": null,
+      "successful_tools": [],
+      "answer_contains_94_percent": false,
+      "edge_exact_match": false
+    },
+    {
+      "file": "results\\ext_brace_string-aware.json",
+      "sha256": "7fae801a72e6f596729d40953323edceba091d9745e7748a443df19a7109c833",
+      "status": "ok",
+      "answer": "右花括号 } 是普通字符。",
+      "successful_tools": [],
+      "answer_contains_94_percent": false,
+      "edge_exact_match": true
+    }
+  ]
+}

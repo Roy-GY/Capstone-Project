@@ -17,6 +17,8 @@ import argparse
 import ast
 import json
 import operator
+import platform
+import importlib.metadata
 import tempfile
 import time
 from collections import Counter
@@ -286,8 +288,9 @@ class _BalancedJSONStop:
     做法：每次都把“新生成的这部分”解码出来，从第一个 { 开始数括号深度，深度回到 0
     （也就是遇到与第一个 { 配对的那个 }）就立刻停止生成，不管 max_new_tokens 还没用完。
     """
-    def __init__(self, tokenizer, prompt_len):
+    def __init__(self, tokenizer, prompt_len, mode="string-aware"):
         self.tokenizer, self.prompt_len = tokenizer, prompt_len
+        self.mode = mode
 
     def __call__(self, input_ids, scores, **kwargs):
         text = self.tokenizer.decode(input_ids[0, self.prompt_len:], skip_special_tokens=True)
@@ -295,7 +298,22 @@ class _BalancedJSONStop:
         if start < 0:
             return False
         depth = 0
+        in_string = False
+        escaped = False
         for ch in text[start:]:
+            # legacy 保留课程原始行为；修正版忽略 JSON 字符串内部的括号。
+            if self.mode == "string-aware":
+                if in_string:
+                    if escaped:
+                        escaped = False
+                    elif ch == "\\":
+                        escaped = True
+                    elif ch == '"':
+                        in_string = False
+                    continue
+                if ch == '"':
+                    in_string = True
+                    continue
             if ch == "{":
                 depth += 1
             elif ch == "}":
@@ -305,7 +323,8 @@ class _BalancedJSONStop:
         return False
 
 
-def make_hf_llm(model_dir, device, max_new_tokens, sample=False, temperature=0.7, top_p=0.8, top_k=20):
+def make_hf_llm(model_dir, device, max_new_tokens, sample=False, temperature=0.7, top_p=0.8, top_k=20,
+                json_stop="string-aware"):
     """本地 transformers 推理：加载一次模型，返回的 llm() 每次都跑一次完整的 generate。"""
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteriaList
@@ -329,12 +348,13 @@ def make_hf_llm(model_dir, device, max_new_tokens, sample=False, temperature=0.7
         # 标记的纯文本；add_generation_prompt=True 会在末尾加上“该模型回复了”的引导标记。
         text = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = tok(text, return_tensors="pt").to(device)
-        stopping = StoppingCriteriaList([_BalancedJSONStop(tok, inputs.input_ids.shape[1])])
+        stopping = StoppingCriteriaList([_BalancedJSONStop(tok, inputs.input_ids.shape[1], json_stop)])
         with torch.inference_mode():
             out = model.generate(**inputs, max_new_tokens=max_new_tokens, stopping_criteria=stopping, **gen_kwargs)
         # generate 返回的是“输入+新生成”拼在一起的完整 token 序列，所以要切掉前面输入
         # 那部分长度（inputs.input_ids.shape[1]），只解码新生成的这一段。
         return tok.decode(out[0, inputs.input_ids.shape[1]:], skip_special_tokens=True)
+    llm.dtype = str(dtype)
     return llm
 
 
@@ -434,6 +454,9 @@ def main():
     ap.add_argument("--temperature", type=float, default=0.7, help="仅 --sample 时生效")
     ap.add_argument("--top-p", type=float, default=0.8, help="仅 --sample 时生效")
     ap.add_argument("--top-k", type=int, default=20, help="仅 --sample 时生效")
+    ap.add_argument("--seed", type=int, default=42, help="hf 随机种子")
+    ap.add_argument("--json-stop", choices=["legacy", "string-aware"], default="string-aware",
+                    help="hf JSON 停止条件：原版或识别字符串与转义的修正版")
     args = ap.parse_args()
 
     if args.selftest:
@@ -444,16 +467,35 @@ def main():
     if not WORKDIR.exists():                          # 首次运行：自动准备演示用的工作目录
         WORKDIR.mkdir(parents=True)
         (WORKDIR / "test_report.txt").write_text("passed=47\nfailed=3\n", encoding="utf-8")
+    environment = {"python": platform.python_version(), "dependencies": {
+        name: importlib.metadata.version(name) for name in ("pydantic", "transformers", "torch", "openai")}}
+    if args.backend == "hf":
+        import torch
+        from transformers import set_seed
+        set_seed(args.seed)
+        if args.device == "cuda" and torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+            free, total = torch.cuda.mem_get_info()
+            environment.update(gpu=torch.cuda.get_device_name(), cuda=torch.version.cuda,
+                               gpu_free_before_bytes=free, gpu_total_bytes=total)
     llm = (make_hf_llm(args.model, args.device, args.max_new_tokens,
-                        sample=args.sample, temperature=args.temperature, top_p=args.top_p, top_k=args.top_k)
+                        sample=args.sample, temperature=args.temperature, top_p=args.top_p, top_k=args.top_k,
+                        json_stop=args.json_stop)
            if args.backend == "hf" else make_openai_llm(args.base_url, args.model, args.max_new_tokens))
     result = run_agent(args.task, llm, args.max_steps, args.max_failures)
+    if args.backend == "hf":
+        environment["dtype"] = llm.dtype
+        if args.device == "cuda":
+            torch.cuda.synchronize()
+            environment.update(peak_allocated_bytes=torch.cuda.max_memory_allocated(),
+                               peak_reserved_bytes=torch.cuda.max_memory_reserved())
     for rec in result["trace"]:                       # 打印调用链
         print(f"[step {rec['step']}] {rec.get('decision', rec.get('error'))}  -> {rec.get('observation', '')}")
     print("status:", result["status"], "| answer:", result["answer"])
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"task": args.task, **result}, ensure_ascii=False, indent=2), encoding="utf-8")
+    out.write_text(json.dumps({"task": args.task, "config": vars(args), "environment": environment,
+                              **result}, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":
